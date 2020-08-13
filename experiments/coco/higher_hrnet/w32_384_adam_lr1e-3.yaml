@@ -23,7 +23,7 @@ DATASET:
   MAX_TRANSLATE: 40
   MIN_SCALE: 0.75
   NUM_JOINTS: 17
-  ROOT: '/home/chengdicao/COCO'
+  ROOT: 'data/COCO'
   TEST: val2014
   TRAIN: train2017
 DEBUG:
@@ -101,8 +101,8 @@ MODEL:
   TAG_PER_JOINT: True
 TEST:
   FLIP_TEST: True
-  IMAGES_PER_GPU: 1
-  MODEL_FILE: '' 
+  IMAGES_PER_GPU: 1024
+  MODEL_FILE: 'models/pytorch/pose_coco/pose_higher_hrnet_w32_512.pth' 
   SCALE_FACTOR: [1]
   DETECTION_THRESHOLD: 0.1
   WITH_HEATMAPS: (True, True)
