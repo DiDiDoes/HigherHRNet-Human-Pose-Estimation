@@ -3,7 +3,7 @@ DATA_DIR: ''
 GPUS: (0,)
 LOG_DIR: log
 OUTPUT_DIR: output
-PRINT_FREQ: 100
+PRINT_FREQ: 500
 CUDNN:
   BENCHMARK: True
   DETERMINISTIC: False
@@ -23,8 +23,8 @@ DATASET:
   MAX_TRANSLATE: 40
   MIN_SCALE: 0.75
   NUM_JOINTS: 17
-  ROOT: 'data/COCO'
-  TEST: val2014
+  ROOT: 'data/coco'
+  TEST: val2017
   TRAIN: train2017
 DEBUG:
   DEBUG: True
@@ -95,7 +95,7 @@ MODEL:
       CAT_OUTPUT:
       - True
   INIT_WEIGHTS: True
-  NAME: pose_higher_hrnet
+  NAME: pose_higher_hrnet_quant
   NUM_JOINTS: 17
   PRETRAINED: 'models/pytorch/imagenet/hrnet_w32-36af842e.pth'
   TAG_PER_JOINT: True
@@ -110,6 +110,7 @@ TEST:
   PROJECT2IMAGE: True
   NMS_KERNEL: 5
   NMS_PADDING: 2
+  LOG_PROGRESS: True
 TRAIN:
   BEGIN_EPOCH: 0
   CHECKPOINT: ''
