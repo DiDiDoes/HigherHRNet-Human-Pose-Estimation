@@ -14,6 +14,7 @@ from __future__ import division
 from __future__ import print_function
 
 from torch.quantization import QuantStub, DeQuantStub
+from collections import OrderedDict
 
 import os
 import logging
@@ -309,6 +310,8 @@ class PoseHigherResolutionNet(nn.Module):
         self.final_layers = self._make_final_layers(cfg, pre_stage_channels[0])
         self.deconv_layers = self._make_deconv_layers(
             cfg, pre_stage_channels[0])
+        self.deconv_post_layers = self._make_deconv_post_layers(
+            cfg, pre_stage_channels[0])
 
         self.num_deconvs = extra.DECONV.NUM_DECONVS
         self.deconv_config = cfg.MODEL.EXTRA.DECONV
@@ -364,20 +367,41 @@ class PoseHigherResolutionNet(nn.Module):
                 self._get_deconv_cfg(deconv_cfg.KERNEL_SIZE[i])
 
             layers = []
-            layers.append(nn.Sequential(
-                #QuantStub(),
-                nn.ConvTranspose2d(
+            layers.append(nn.Sequential(OrderedDict([
+                ('0', nn.ConvTranspose2d(
                     in_channels=input_channels,
                     out_channels=output_channels,
                     kernel_size=deconv_kernel,
                     stride=2,
                     padding=padding,
                     output_padding=output_padding,
-                    bias=False),
-                #DeQuantStub(),
-                nn.BatchNorm2d(output_channels, momentum=BN_MOMENTUM),
-                nn.ReLU(inplace=True)
-            ))
+                    bias=False)),
+            ])))
+            deconv_layers.append(nn.Sequential(*layers))
+            input_channels = output_channels
+
+        return nn.ModuleList(deconv_layers)
+
+    def _make_deconv_post_layers(self, cfg, input_channels):
+        dim_tag = cfg.MODEL.NUM_JOINTS if cfg.MODEL.TAG_PER_JOINT else 1
+        extra = cfg.MODEL.EXTRA
+        deconv_cfg = extra.DECONV
+
+        deconv_layers = []
+        for i in range(deconv_cfg.NUM_DECONVS):
+            if deconv_cfg.CAT_OUTPUT[i]:
+                final_output_channels = cfg.MODEL.NUM_JOINTS + dim_tag \
+                    if cfg.LOSS.WITH_AE_LOSS[i] else cfg.MODEL.NUM_JOINTS
+                input_channels += final_output_channels
+            output_channels = deconv_cfg.NUM_CHANNELS[i]
+            deconv_kernel, padding, output_padding = \
+                self._get_deconv_cfg(deconv_cfg.KERNEL_SIZE[i])
+
+            layers = []
+            layers.append(nn.Sequential(OrderedDict([
+                ('1', nn.BatchNorm2d(output_channels, momentum=BN_MOMENTUM)),
+                ('2', nn.ReLU(inplace=True))
+            ])))
             for _ in range(cfg.MODEL.EXTRA.DECONV.NUM_BASIC_BLOCKS):
                 layers.append(nn.Sequential(
                     BasicBlock(output_channels, output_channels),
@@ -527,9 +551,10 @@ class PoseHigherResolutionNet(nn.Module):
             if self.deconv_config.CAT_OUTPUT[i]:
                 x = torch.cat((x, y), 1)
 
-            # x = self.dequant(x)
+            x = self.dequant(x)
             x = self.deconv_layers[i](x)
-            # x = self.quant(x)
+            x = self.quant(x)
+            x = self.deconv_post_layers[i](x)
             y = self.final_layers[i+1](x)
             y_dequant = self.dequant(y)
             final_outputs.append(y_dequant)
@@ -578,12 +603,14 @@ class PoseHigherResolutionNet(nn.Module):
             self.load_state_dict(need_init_state_dict, strict=False)
 
     def fuse_model(self):
+        count = 0
         modules_to_fuse = [
             ['conv1', 'bn1'],
             ['conv2', 'bn2']
             ]
         torch.quantization.fuse_modules(self, modules_to_fuse, inplace=True)
-        
+        count += 2
+
         for m in self.modules():
             if type(m) == BasicBlock:
                 modules_to_fuse = [
@@ -591,6 +618,7 @@ class PoseHigherResolutionNet(nn.Module):
                     ['conv2', 'bn2']
                     ]
                 torch.quantization.fuse_modules(m, modules_to_fuse, inplace=True)
+                count += 2
             if type(m) == Bottleneck:
                 modules_to_fuse = [
                     ['conv1', 'bn1'],
@@ -598,6 +626,8 @@ class PoseHigherResolutionNet(nn.Module):
                     ['conv3', 'bn3']
                     ]
                 torch.quantization.fuse_modules(m, modules_to_fuse, inplace=True)
+                count += 3
+        logger.info('Implemented {} fuse operations'.format(count))
         
 
 

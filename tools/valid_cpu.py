@@ -122,7 +122,15 @@ def main():
 
     if cfg.TEST.MODEL_FILE:
         logger.info('=> loading model from {}'.format(cfg.TEST.MODEL_FILE))
-        model.load_state_dict(torch.load(cfg.TEST.MODEL_FILE, map_location=torch.device('cpu')), strict=False)
+        model_dict = torch.load(cfg.TEST.MODEL_FILE, map_location=torch.device('cpu'))
+        keys_to_change = []
+        for k, v in model_dict.items():
+            if 'deconv_layers' in k and '0.0.0' not in k:
+                keys_to_change.append(k)
+        for k in keys_to_change:
+            k_post = k.replace('deconv_layers', 'deconv_post_layers')
+            model_dict[k_post] = model_dict.pop(k)
+        model.load_state_dict(model_dict, strict=True)
     else:
         model_state_file = os.path.join(
             final_output_dir, 'model_best.pth.tar'

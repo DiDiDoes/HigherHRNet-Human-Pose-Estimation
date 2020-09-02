@@ -24,7 +24,7 @@ DATASET:
   MIN_SCALE: 0.75
   NUM_JOINTS: 17
   ROOT: 'data/coco'
-  TEST: val2017
+  TEST: toy2017
   TRAIN: train2017
 DEBUG:
   DEBUG: True
@@ -86,7 +86,7 @@ MODEL:
       - 256
       FUSE_METHOD: SUM
     DECONV:
-      NUM_DECONVS: 0
+      NUM_DECONVS: 1
       NUM_CHANNELS:
       - 32
       KERNEL_SIZE:
