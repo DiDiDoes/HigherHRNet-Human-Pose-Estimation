@@ -122,7 +122,7 @@ def main():
 
     if cfg.TEST.MODEL_FILE:
         logger.info('=> loading model from {}'.format(cfg.TEST.MODEL_FILE))
-        model.load_state_dict(torch.load(cfg.TEST.MODEL_FILE, map_location=torch.device('cpu')), strict=True)
+        model.load_state_dict(torch.load(cfg.TEST.MODEL_FILE, map_location=torch.device('cpu')), strict=False)
     else:
         model_state_file = os.path.join(
             final_output_dir, 'model_best.pth.tar'
@@ -132,6 +132,8 @@ def main():
 
     # model = torch.nn.DataParallel(model, device_ids=cfg.GPUS).cuda()
     model.eval()
+    model.fuse_model()
+
     print("Size of model before quantization")
     print_size_of_model(model)
     # torch.jit.save(torch.jit.script(model), 'models/pytorch/pose_coco/pose_higher_hrnet_w32_512_quant.pth')
@@ -139,8 +141,6 @@ def main():
     model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
     print(model.qconfig)
     torch.quantization.prepare(model, inplace=True)
-
-    data_loader, test_dataset = make_test_dataloader(cfg)
 
     if cfg.MODEL.NAME == 'pose_hourglass':
         transforms = torchvision.transforms.Compose(
@@ -162,6 +162,9 @@ def main():
     parser = HeatmapParser(cfg)
     all_preds = []
     all_scores = []
+
+    # cfg.DATASET.TEST = 'toy2017'
+    data_loader, test_dataset = make_test_dataloader(cfg)
 
     pbar = tqdm(total=len(test_dataset)) if cfg.TEST.LOG_PROGRESS else None
     for i, (images, annos) in enumerate(data_loader):

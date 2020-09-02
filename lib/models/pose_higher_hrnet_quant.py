@@ -44,6 +44,7 @@ class BasicBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM)
         self.downsample = downsample
         self.stride = stride
+        self.add = nn.quantized.FloatFunctional()
 
     def forward(self, x):
         residual = x
@@ -58,7 +59,7 @@ class BasicBlock(nn.Module):
         if self.downsample is not None:
             residual = self.downsample(x)
 
-        out += residual
+        out = self.add.add(out, residual)
         out = self.relu(out)
 
         return out
@@ -82,6 +83,8 @@ class Bottleneck(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
+        self.add = nn.quantized.FloatFunctional()
+
     def forward(self, x):
         residual = x
 
@@ -99,7 +102,7 @@ class Bottleneck(nn.Module):
         if self.downsample is not None:
             residual = self.downsample(x)
 
-        out += residual
+        out = self.add.add(out, residual)
         out = self.relu(out)
 
         return out
@@ -122,6 +125,7 @@ class HighResolutionModule(nn.Module):
             num_branches, blocks, num_blocks, num_channels)
         self.fuse_layers = self._make_fuse_layers()
         self.relu = nn.ReLU(True)
+        self.add = nn.quantized.FloatFunctional()
 
     def _check_branches(self, num_branches, blocks, num_blocks,
                         num_inchannels, num_channels):
@@ -237,9 +241,9 @@ class HighResolutionModule(nn.Module):
             y = x[0] if i == 0 else self.fuse_layers[i][0](x[0])
             for j in range(1, self.num_branches):
                 if i == j:
-                    y = y + x[j]
+                    y = self.add.add(y, x[j])
                 else:
-                    y = y + self.fuse_layers[i][j](x[j])
+                    y = self.add.add(y, self.fuse_layers[i][j](x[j]))
             x_fuse.append(self.relu(y))
 
         return x_fuse
@@ -257,6 +261,8 @@ class PoseHigherResolutionNet(nn.Module):
         self.inplanes = 64
         extra = cfg.MODEL.EXTRA
         super(PoseHigherResolutionNet, self).__init__()
+        
+        self.quant = QuantStub()
 
         # stem net
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1,
@@ -310,9 +316,7 @@ class PoseHigherResolutionNet(nn.Module):
 
         self.pretrained_layers = cfg['MODEL']['EXTRA']['PRETRAINED_LAYERS']
 
-        self.quant = QuantStub()
-        self.dequant1 = DeQuantStub()
-        self.dequant2 = DeQuantStub()
+        self.dequant = DeQuantStub()
 
     def _make_final_layers(self, cfg, input_channels):
         dim_tag = cfg.MODEL.NUM_JOINTS if cfg.MODEL.TAG_PER_JOINT else 1
@@ -361,6 +365,7 @@ class PoseHigherResolutionNet(nn.Module):
 
             layers = []
             layers.append(nn.Sequential(
+                #QuantStub(),
                 nn.ConvTranspose2d(
                     in_channels=input_channels,
                     out_channels=output_channels,
@@ -369,6 +374,7 @@ class PoseHigherResolutionNet(nn.Module):
                     padding=padding,
                     output_padding=output_padding,
                     bias=False),
+                #DeQuantStub(),
                 nn.BatchNorm2d(output_channels, momentum=BN_MOMENTUM),
                 nn.ReLU(inplace=True)
             ))
@@ -514,17 +520,19 @@ class PoseHigherResolutionNet(nn.Module):
         final_outputs = []
         x = y_list[0]
         y = self.final_layers[0](x)
-        y = self.dequant1(y)
-        final_outputs.append(y)
+        y_dequant = self.dequant(y)
+        final_outputs.append(y_dequant)
 
         for i in range(self.num_deconvs):
             if self.deconv_config.CAT_OUTPUT[i]:
                 x = torch.cat((x, y), 1)
 
+            # x = self.dequant(x)
             x = self.deconv_layers[i](x)
+            # x = self.quant(x)
             y = self.final_layers[i+1](x)
-            y = self.dequant2(y)
-            final_outputs.append(y)
+            y_dequant = self.dequant(y)
+            final_outputs.append(y_dequant)
 
         return final_outputs
 
@@ -568,6 +576,29 @@ class PoseHigherResolutionNet(nn.Module):
                             )
                         need_init_state_dict[name] = m
             self.load_state_dict(need_init_state_dict, strict=False)
+
+    def fuse_model(self):
+        modules_to_fuse = [
+            ['conv1', 'bn1'],
+            ['conv2', 'bn2']
+            ]
+        torch.quantization.fuse_modules(self, modules_to_fuse, inplace=True)
+        
+        for m in self.modules():
+            if type(m) == BasicBlock:
+                modules_to_fuse = [
+                    ['conv1', 'bn1'],
+                    ['conv2', 'bn2']
+                    ]
+                torch.quantization.fuse_modules(m, modules_to_fuse, inplace=True)
+            if type(m) == Bottleneck:
+                modules_to_fuse = [
+                    ['conv1', 'bn1'],
+                    ['conv2', 'bn2'],
+                    ['conv3', 'bn3']
+                    ]
+                torch.quantization.fuse_modules(m, modules_to_fuse, inplace=True)
+        
 
 
 def get_pose_net(cfg, is_train, **kwargs):
