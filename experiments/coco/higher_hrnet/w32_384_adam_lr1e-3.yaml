@@ -95,14 +95,14 @@ MODEL:
       CAT_OUTPUT:
       - True
   INIT_WEIGHTS: True
-  NAME: pose_higher_hrnet_quant
+  NAME: pose_higher_hrnet_effd
   NUM_JOINTS: 17
   PRETRAINED: 'models/pytorch/imagenet/hrnet_w32-36af842e.pth'
   TAG_PER_JOINT: True
 TEST:
-  FLIP_TEST: True
+  FLIP_TEST: False
   IMAGES_PER_GPU: 1024
-  MODEL_FILE: 'models/pytorch/pose_coco/pose_higher_hrnet_w32_512.pth' 
+  MODEL_FILE: 'models/pytorch/pose_coco/efficientdet-d1.pth' 
   SCALE_FACTOR: [1]
   DETECTION_THRESHOLD: 0.1
   WITH_HEATMAPS: (True, True)
