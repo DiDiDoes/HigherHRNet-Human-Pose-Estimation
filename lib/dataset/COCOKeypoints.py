@@ -15,7 +15,6 @@ import numpy as np
 
 import pycocotools
 from .COCODataset import CocoDataset
-from .target_generators import HeatmapGenerator
 
 
 logger = logging.getLogger(__name__)

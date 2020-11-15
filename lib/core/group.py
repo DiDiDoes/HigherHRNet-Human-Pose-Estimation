@@ -12,7 +12,47 @@ from __future__ import print_function
 
 from munkres import Munkres
 import numpy as np
-import torch
+
+
+def maxpool_numpy(img, kernel, pad):
+    img = np.pad(img, ((0,0), (pad,pad), (pad,pad), (0,0)))
+    a, X, Y, b = img.shape
+    x, y = kernel, kernel
+    shape = (a, X - x + 1, Y - y + 1, x, y, b)
+    a_str, X_str, Y_str, b_str = img.strides
+    strides = (a_str, X_str, Y_str, X_str, Y_str, b_str)
+    patch = np.lib.stride_tricks.as_strided(img, shape=shape, strides=strides)
+
+    return patch.max(axis=(3,4))
+
+
+def topk_numpy(x, k, dim=2):
+    assert dim == 2
+    ind = x.argsort(axis=dim)[:,:,-k:]
+    value = np.take_along_axis(x, ind, axis=dim)
+    return value, ind
+
+def gather_numpy(self, dim, index):
+    """
+    Gathers values along an axis specified by dim.
+    For a 3-D tensor the output is specified by:
+        out[i][j][k] = input[index[i][j][k]][j][k]  # if dim == 0
+        out[i][j][k] = input[i][index[i][j][k]][k]  # if dim == 1
+        out[i][j][k] = input[i][j][index[i][j][k]]  # if dim == 2
+
+    :param dim: The axis along which to index
+    :param index: A tensor of indices of elements to gather
+    :return: tensor of gathered values
+    """
+    assert dim == 2
+    x_shape = self.shape
+    assert len(x_shape) == 3
+    
+    result = np.zeros_like(index)
+    for i in range(x_shape[0]):
+        for j in range(x_shape[1]):
+            result[i,j,:] = self[i,j,index[i,j,:]]
+    return result
 
 
 def py_max_match(scores):
@@ -123,13 +163,17 @@ class HeatmapParser(object):
     def __init__(self, cfg):
         self.params = Params(cfg)
         self.tag_per_joint = cfg.MODEL.TAG_PER_JOINT
+        '''
         self.pool = torch.nn.MaxPool2d(
             cfg.TEST.NMS_KERNEL, 1, cfg.TEST.NMS_PADDING
         )
+        '''
+        self.kernel = cfg.TEST.NMS_KERNEL
+        self.padding = cfg.TEST.NMS_PADDING
 
     def nms(self, det):
-        maxm = self.pool(det)
-        maxm = torch.eq(maxm, det).float()
+        maxm = maxpool_numpy(det, self.kernel, self.padding)
+        maxm = np.equal(maxm, det).astype('float')
         det = det * maxm
         return det
 
@@ -138,38 +182,38 @@ class HeatmapParser(object):
         return list(map(match, zip(tag_k, loc_k, val_k)))
 
     def top_k(self, det, tag):
-        # det = torch.Tensor(det, requires_grad=False)
-        # tag = torch.Tensor(tag, requires_grad=False)
-
         det = self.nms(det)
-        num_images = det.size(0)
-        num_joints = det.size(1)
-        h = det.size(2)
-        w = det.size(3)
-        det = det.view(num_images, num_joints, -1)
-        val_k, ind = det.topk(self.params.max_num_people, dim=2)
 
-        tag = tag.view(tag.size(0), tag.size(1), w*h, -1)
+        num_images = det.shape[0]
+        num_joints = det.shape[3]
+        h = det.shape[1]
+        w = det.shape[2]
+        det = det.transpose((0,3,1,2)).reshape((num_images, num_joints, -1))
+        val_k, ind = topk_numpy(det, self.params.max_num_people, dim=2)
+
+        tag_size = tag.shape
+        tag = tag.transpose((0,3,1,2,4)).reshape((tag_size[0], tag_size[3], w*h, -1))
         if not self.tag_per_joint:
+            raise NotImplementedError
             tag = tag.expand(-1, self.params.num_joints, -1, -1)
 
-        tag_k = torch.stack(
+        tag_k = np.stack(
             [
-                torch.gather(tag[:, :, :, i], 2, ind)
-                for i in range(tag.size(3))
+                gather_numpy(tag[:, :, :, i], 2, ind)
+                for i in range(tag.shape[3])
             ],
-            dim=3
+            axis=3
         )
 
         x = ind % w
-        y = (ind / w).long()
+        y = (ind // w).astype('long')
 
-        ind_k = torch.stack((x, y), dim=3)
+        ind_k = np.stack((x, y), axis=3)
 
         ans = {
-            'tag_k': tag_k.cpu().numpy(),
-            'loc_k': ind_k.cpu().numpy(),
-            'val_k': val_k.cpu().numpy()
+            'tag_k': tag_k,
+            'loc_k': ind_k,
+            'val_k': val_k
         }
 
         return ans
@@ -182,7 +226,7 @@ class HeatmapParser(object):
                         y, x = joint[0:2]
                         xx, yy = int(x), int(y)
                         #print(batch_id, joint_id, det[batch_id].shape)
-                        tmp = det[batch_id][joint_id]
+                        tmp = det[batch_id,:,:,joint_id]
                         if tmp[xx, min(yy+1, tmp.shape[1]-1)] > tmp[xx, max(yy-1, 0)]:
                             y += 0.25
                         else:
@@ -271,8 +315,8 @@ class HeatmapParser(object):
             ans = ans[0]
             # for every detected person
             for i in range(len(ans)):
-                det_numpy = det[0].cpu().numpy()
-                tag_numpy = tag[0].cpu().numpy()
+                det_numpy = det[0].transpose((2,0,1))
+                tag_numpy = tag[0].transpose((2,0,1,3))
                 if not self.tag_per_joint:
                     tag_numpy = np.tile(
                         tag_numpy, (self.params.num_joints, 1, 1, 1)

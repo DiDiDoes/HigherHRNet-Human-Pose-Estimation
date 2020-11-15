@@ -18,15 +18,14 @@ import os.path
 import cv2
 import json_tricks as json
 import numpy as np
-from torch.utils.data import Dataset
+from tensorflow.keras.utils import Sequence
 
 from pycocotools.cocoeval import COCOeval
-from utils import zipreader
 
 logger = logging.getLogger(__name__)
 
 
-class CocoDataset(Dataset):
+class CocoDataset(Sequence):
     """`MS Coco Detection <http://mscoco.org/dataset/#detections-challenge2016>`_ Dataset.
 
     Args:
@@ -108,16 +107,10 @@ class CocoDataset(Dataset):
 
         file_name = coco.loadImgs(img_id)[0]['file_name']
 
-        if self.data_format == 'zip':
-            img = zipreader.imread(
-                self._get_image_path(file_name),
-                cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
-            )
-        else:
-            img = cv2.imread(
-                self._get_image_path(file_name),
-                cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
-            )
+        img = cv2.imread(
+            self._get_image_path(file_name),
+            cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
+        )
 
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
@@ -167,12 +160,13 @@ class CocoDataset(Dataset):
         :param kwargs: 
         :return: 
         '''
+        
         res_folder = os.path.join(output_dir, 'results')
         if not os.path.exists(res_folder):
             os.makedirs(res_folder)
         res_file = os.path.join(
             res_folder, 'keypoints_%s_results.json' % self.dataset)
-
+        
         # preds is a list of: image x person x (keypoints)
         # keypoints: num_joints * 4 (x, y, score, tag)
         kpts = defaultdict(list)
@@ -209,11 +203,11 @@ class CocoDataset(Dataset):
                 oks_nmsed_kpts.append(img_kpts)
             else:
                 oks_nmsed_kpts.append([img_kpts[_keep] for _keep in keep])
-
+        
         self._write_coco_keypoint_results(
             oks_nmsed_kpts, res_file
         )
-
+        
         if 'test' not in self.dataset:
             info_str = self._do_python_keypoint_eval(
                 res_file, res_folder
